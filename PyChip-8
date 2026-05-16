@@ -26,3 +26,21 @@ FONTS = [
     0xF0, 0x80, 0xF0, 0x80, 0xF0, # E
     0xF0, 0x80, 0xF0, 0x80, 0x80  # F
 ]
+class Chip8:
+    def __init__(self):
+        # Memory and registers (equivalent to uint8_t arrays)
+        self.ram = bytearray(4096)
+        self.v = bytearray(16)        # Registers V0 - VF
+        self.i = 0                    # 16-bit index register
+        self.pc = 0x200               # Program Counter starts at 0x200
+        
+        # Stack
+        self.stack = []
+        
+        # 64x32 graphics buffer
+        self.display = bytearray(WIDTH * HEIGHT)
+        self.draw_flag = False
+        
+        # Timers
+        self.delay_timer = 0
+        self.sound_timer = 0
