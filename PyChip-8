@@ -5,7 +5,7 @@ import pygame
 # Emulator constants
 WIDTH = 64
 HEIGHT = 32
-SCALE = 15  # Window scale for Pygame
+SCALE = 15  # Screen scale for the Pygame window
 
 # Standard CHIP-8 font set (each character is 4x5 pixels)
 FONTS = [
@@ -26,11 +26,12 @@ FONTS = [
     0xF0, 0x80, 0xF0, 0x80, 0xF0, # E
     0xF0, 0x80, 0xF0, 0x80, 0x80  # F
 ]
+
 class Chip8:
     def __init__(self):
         # Memory and registers (equivalent to uint8_t arrays)
         self.ram = bytearray(4096)
-        self.v = bytearray(16)        # Registers V0 - VF
+        self.v = bytearray(16)        # V0 - VF registers
         self.i = 0                    # 16-bit index register
         self.pc = 0x200               # Program Counter starts at 0x200
         
@@ -44,3 +45,141 @@ class Chip8:
         # Timers
         self.delay_timer = 0
         self.sound_timer = 0
+        
+        # Load font set into the beginning of RAM
+        for i in range(len(FONTS)):
+            self.ram[i] = FONTS[i]
+
+    def load_rom(self, filepath):
+        """Reads a binary ROM file and loads it into RAM starting at 0x200"""
+        with open(filepath, 'rb') as f:
+            rom_data = f.read()
+            for index, byte in enumerate(rom_data):
+                self.ram[0x200 + index] = byte
+
+    def emulate_cycle(self):
+        """Single CPU cycle: Fetch -> Decode -> Execute"""
+        
+        # 1. Fetch: combine two bytes into one 16-bit opcode
+        opcode = (self.ram[self.pc] << 8) | self.ram[self.pc + 1]
+        self.pc += 2
+        
+        # 2. Decode & Execute
+        # Extract individual parts of the opcode using bitwise masks
+        x = (opcode & 0x0F00) >> 8
+        y = (opcode & 0x00F0) >> 4
+        nnn = opcode & 0x0FFF
+        kk = opcode & 0x00FF
+        first_nibble = opcode & 0xF000
+
+        if opcode == 0x00E0:
+            # CLS: Clear the screen
+            self.display = bytearray(WIDTH * HEIGHT)
+            self.draw_flag = True
+
+        elif opcode == 0x00EE:
+            # RET: Return from a subroutine
+            self.pc = self.stack.pop()
+
+        elif first_nibble == 0x1000:
+            # 1nnn - JP addr: Jump to address
+            self.pc = nnn
+
+        elif first_nibble == 0x2000:
+            # 2nnn - CALL addr: Call subroutine
+            self.stack.append(self.pc)
+            self.pc = nnn
+
+        elif first_nibble == 0x6000:
+            # 6xkk - LD Vx, byte: Set Vx = kk
+            self.v[x] = kk
+
+        elif first_nibble == 0x7000:
+            # 7xkk - ADD Vx, byte: Set Vx = Vx + kk
+            self.v[x] = (self.v[x] + kk) & 0xFF
+
+        elif first_nibble == 0xA000:
+            # Annn - LD I, addr: Set I = nnn
+            self.i = nnn
+
+        elif first_nibble == 0xD000:
+            # Dxyn - DRW Vx, Vy, nibble: Display / Draw sprite
+            height = opcode & 0x000F
+            self.v[0xF] = 0 # Reset collision flag to 0
+            
+            vx = self.v[x] % WIDTH
+            vy = self.v[y] % HEIGHT
+            
+            for row in range(height):
+                sprite_byte = self.ram[self.i + row]
+                for col in range(8):
+                    # Check each bit of the sprite row
+                    if (sprite_byte & (0x80 >> col)) != 0:
+                        pixel_x = (vx + col) % WIDTH
+                        pixel_y = (vy + row) % HEIGHT
+                        index = pixel_x + (pixel_y * WIDTH)
+                        
+                        # If the pixel is already set, set collision flag V[F] = 1
+                        if self.display[index] == 1:
+                            self.v[0xF] = 1
+                            
+                        # Pixels are drawn using XOR
+                        self.display[index] ^= 1
+                        
+            self.draw_flag = True
+
+        else:
+            print(f"Unknown opcode: {hex(opcode)}")
+
+    def update_timers(self):
+        if self.delay_timer > 0:
+            self.delay_timer -= 1
+        if self.sound_timer > 0:
+            self.sound_timer -= 1
+
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: python chip8.py <path_to_rom>")
+        return
+
+    # Graphics initialization
+    pygame.init()
+    screen = pygame.display.set_mode((WIDTH * SCALE, HEIGHT * SCALE))
+    pygame.display.set_caption("CHIP-8 Emulator")
+    clock = pygame.time.Clock()
+
+    cpu = Chip8()
+    cpu.load_rom(sys.argv[1])
+
+    running = True
+    while running:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+
+        # CHIP-8 originally ran at roughly 500-700 instructions per second.
+        # We execute multiple CPU cycles per single screen frame.
+        for _ in range(10): 
+            cpu.emulate_cycle()
+
+        cpu.update_timers()
+
+        # Render if the DXYN opcode was executed
+        if cpu.draw_flag:
+            screen.fill((0, 0, 0)) # Black background
+            for i in range(WIDTH * HEIGHT):
+                if cpu.display[i] == 1:
+                    x = (i % WIDTH) * SCALE
+                    y = (i // WIDTH) * SCALE
+                    pygame.draw.rect(screen, (255, 255, 255), (x, y, SCALE, SCALE))
+            
+            pygame.display.flip()
+            cpu.draw_flag = False
+
+        clock.tick(60) # Update screen 60 times per second
+
+    pygame.quit()
+
+if __name__ == "__main__":
+    main()
